@@ -26,6 +26,50 @@ from aliyun.log import (
 from tests._helpers.fakes import error_response, make_client, mock_sls_response
 
 
+class _SizedBody(object):
+    def __init__(self, size):
+        self.size = size
+
+    def __len__(self):
+        return self.size
+
+
+class _SizedLogGroup(object):
+    def __init__(self, size):
+        self.size = size
+
+    def SerializeToString(self):
+        return _SizedBody(self.size)
+
+
+def _put_empty_log_group(monkeypatch, size):
+    import aliyun.log.logclient as logclient_module
+
+    monkeypatch.setattr(logclient_module, "LogGroup", lambda: _SizedLogGroup(size))
+    client = make_client(endpoint="cn-mock.example.com", project="mock-proj")
+    monkeypatch.setattr(
+        client,
+        "_send",
+        lambda *args, **kwargs: (b"", {"x-log-requestid": "mock-request-id"}),
+    )
+    request = PutLogsRequest(
+        "mock-proj", "store-1", "topic", "src", [], compress=False
+    )
+    return client.put_logs(request)
+
+
+def test_put_logs_accepts_30_mb_raw_body(monkeypatch):
+    _put_empty_log_group(monkeypatch, 30 * 1024 * 1024)
+
+
+def test_put_logs_rejects_raw_body_larger_than_30_mb(monkeypatch):
+    with pytest.raises(LogException) as excinfo:
+        _put_empty_log_group(monkeypatch, 30 * 1024 * 1024 + 1)
+
+    assert excinfo.value.get_error_code() == "InvalidLogSize"
+    assert "30 MB" in excinfo.value.get_error_message()
+
+
 @responses.activate
 def test_get_logs_returns_parsed():
     """GET /logs response is parsed into a GetLogsResponse with logs."""
