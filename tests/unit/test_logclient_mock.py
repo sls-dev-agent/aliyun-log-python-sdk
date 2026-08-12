@@ -448,3 +448,60 @@ def test_create_logstore_supports_enable_modify():
     )
 
     assert captured["body"]["enableModify"] is True
+
+
+@responses.activate
+def test_enable_logstore_modify_sends_dedicated_request():
+    client = make_client(endpoint="cn-mock.example.com", project="mock-proj")
+
+    captured = {}
+
+    def request_callback(request):
+        captured["body"] = json.loads(request.body.decode("utf-8"))
+        captured["headers"] = request.headers
+        return (
+            200,
+            {"x-log-requestid": "mock-request-id"},
+            "{}",
+        )
+
+    responses.add_callback(
+        responses.PUT,
+        re.compile(
+            r"https?://mock-proj\.cn-mock\.example\.com.*?"
+            r"/logstores/store-1/modification$"
+        ),
+        callback=request_callback,
+    )
+
+    response = client.enable_logstore_modify("mock-proj", "store-1")
+
+    assert captured["body"] == {"enabled": True}
+    assert captured["headers"]["Content-Type"] == "application/json"
+    assert int(captured["headers"]["x-log-bodyrawsize"]) == len(
+        json.dumps({"enabled": True}).encode("utf-8")
+    )
+    assert response.get_request_id() == "mock-request-id"
+
+
+def test_get_logstore_response_exposes_enable_modify():
+    from aliyun.log.logstore_config_response import GetLogStoreResponse
+
+    body = {
+        "logstoreName": "store-1",
+        "ttl": 30,
+        "shardCount": 1,
+        "enable_tracking": False,
+        "appendMeta": False,
+        "autoSplit": True,
+        "maxSplitShard": 64,
+        "enableModify": True,
+    }
+
+    response = GetLogStoreResponse(body, {})
+
+    assert response.enable_modify is True
+    assert response.get_enable_modify() is True
+
+    body.pop("enableModify")
+    assert GetLogStoreResponse(body, {}).get_enable_modify() is False
